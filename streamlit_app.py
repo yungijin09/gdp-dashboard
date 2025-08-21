@@ -1,151 +1,131 @@
+
+#### 3. [streamlit_app.py 전체 코드]
+
+# streamlit_app.py
+
 import streamlit as st
-import pandas as pd
-import math
-from pathlib import Path
+import random
+import time
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
-)
+# --- 게임 설정 ---
+SCREEN_WIDTH = 40
+GROUND_LEVEL = 1
+DINO_CHAR = "🦖"
+OBSTACLE_CHAR = "🌵"
+EMPTY_CHAR = " "
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
+# --- 게임 상태 초기화 함수 ---
+def initialize_game():
+    """게임에 필요한 모든 상태 변수를 st.session_state에 초기화합니다."""
+    st.session_state.dino_y = GROUND_LEVEL  # 공룡의 y좌표
+    st.session_state.dino_velocity = 0  # 공룡의 수직 속도 (점프용)
+    st.session_state.gravity = -2.5      # 중력 값
+    st.session_state.jump_strength = 9  # 점프 강도
+    st.session_state.is_jumping = False   # 점프 상태 여부
 
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
+    st.session_state.obstacles = []       # 장애물 리스트
+    st.session_state.score = 0            # 점수
+    st.session_state.game_over = False    # 게임 오버 상태
+    st.session_state.frame_count = 0      # 장애물 생성 타이밍 조절용
 
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
+# --- 메인 게임 로직 ---
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
+# 앱 제목 설정
+st.title("🦕 Streamlit 공룡 게임 🌵")
 
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
+# st.session_state가 초기화되지 않았다면 게임 시작 상태로 설정
+if 'game_started' not in st.session_state:
+    st.session_state.game_started = False
 
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
+# 시작 화면
+if not st.session_state.game_started:
+    if st.button("🚀 게임 시작하기"):
+        st.session_state.game_started = True
+        initialize_game()
+        st.rerun() # 버튼 클릭 시 즉시 게임 화면으로 전환
 
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
+# 게임이 시작된 경우
+else:
+    # 게임 오버 화면
+    if st.session_state.game_over:
+        st.error(f"GAME OVER! 최종 점수: {st.session_state.score}", icon="💀")
+        if st.button("다시 시작하기"):
+            initialize_game() # 게임 상태 초기화
+            st.rerun() # 즉시 재시작
+    
+    # 게임 진행 화면
+    else:
+        # --- 입력 처리 ---
+        # '점프' 버튼을 누르면 공룡의 점프 상태를 활성화
+        if st.button("점프!", use_container_width=True):
+            if not st.session_state.is_jumping:
+                st.session_state.is_jumping = True
+                st.session_state.dino_velocity = st.session_state.jump_strength
 
-    return gdp_df
+        # --- 게임 상태 업데이트 ---
+        
+        # 1. 점수 및 프레임 증가
+        st.session_state.score += 1
+        st.session_state.frame_count += 1
 
-gdp_df = get_gdp_data()
+        # 2. 공룡 위치 업데이트 (점프 및 중력)
+        if st.session_state.is_jumping:
+            st.session_state.dino_y += st.session_state.dino_velocity
+            st.session_state.dino_velocity += st.session_state.gravity
+            
+            # 땅에 닿으면 점프 상태 초기화
+            if st.session_state.dino_y <= GROUND_LEVEL:
+                st.session_state.dino_y = GROUND_LEVEL
+                st.session_state.is_jumping = False
+                st.session_state.dino_velocity = 0
+        
+        # 3. 장애물 이동 및 생성
+        # 장애물 위치를 왼쪽으로 한 칸씩 이동
+        for obstacle in st.session_state.obstacles:
+            obstacle['x'] -= 1
+        
+        # 화면 밖으로 나간 장애물 제거
+        st.session_state.obstacles = [ob for ob in st.session_state.obstacles if ob['x'] > 0]
+        
+        # 일정 프레임마다 무작위로 새로운 장애물 생성
+        if st.session_state.frame_count % random.randint(25, 40) == 0:
+            st.session_state.obstacles.append({'x': SCREEN_WIDTH - 1})
 
-# -----------------------------------------------------------------------------
-# Draw the actual page
+        # 4. 충돌 감지
+        dino_pos = 2  # 공룡은 화면 왼쪽에서 2번째 칸에 고정
+        for obstacle in st.session_state.obstacles:
+            # 공룡과 장애물의 x, y 좌표가 모두 겹치면 충돌
+            if obstacle['x'] == dino_pos and st.session_state.dino_y <= GROUND_LEVEL:
+                st.session_state.game_over = True
 
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
+        # --- 화면 그리기 ---
 
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
+        # 점수판 표시
+        st.info(f"점수: {st.session_state.score}")
 
-# Add some spacing
-''
-''
+        # 게임 화면을 표시할 placeholder 생성
+        game_canvas = st.empty()
+        
+        # 2D 그리드 생성 (하늘)
+        grid = [[EMPTY_CHAR for _ in range(SCREEN_WIDTH)] for _ in range(12)]
+        
+        # 바닥 그리기
+        for i in range(SCREEN_WIDTH):
+            grid[GROUND_LEVEL-1][i] = "─"
 
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
-
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
-
-''
-''
-
-
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
-
-st.header(f'GDP in {to_year}', divider='gray')
-
-''
-
-cols = st.columns(4)
-
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
-
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
-
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+        # 공룡 그리기 (정수 좌표에만)
+        dino_render_y = min(len(grid) - 1, int(st.session_state.dino_y))
+        grid[dino_render_y][dino_pos] = DINO_CHAR
+        
+        # 장애물 그리기
+        for obstacle in st.session_state.obstacles:
+            grid[GROUND_LEVEL][obstacle['x']] = OBSTACLE_CHAR
+        
+        # 그리드를 하나의 문자열로 변환하여 출력
+        canvas_str = "\n".join(["".join(row) for row in reversed(grid)])
+        game_canvas.code(canvas_str, language=None)
+        
+        # 게임 루프를 위한 지연 및 새로고침
+        if not st.session_state.game_over:
+            time.sleep(0.1) # 프레임 속도 조절
+            st.rerun()
